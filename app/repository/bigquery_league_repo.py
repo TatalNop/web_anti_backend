@@ -73,29 +73,46 @@ class LeagueRepository(ILeagueRepository):
             )
     
     def delete(self, league_id: str) -> int:
-        """ Delete a league by league_id"""
-        query = f"""
-            DELETE FROM `{self.project_id}.{self.dataset}.{self.table}`
+        
+        check_query = f"""
+            SELECT COUNT(*) AS match_count
+            FROM `{self.project_id}.{self.dataset}.matches`
             WHERE league_id = @league_id
         """
+        
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
                 bigquery.ScalarQueryParameter("league_id", "STRING", league_id),
             ]
         )
         try:
-            query_job = self.client.query(query, job_config=job_config)
-            results = query_job.result()
-            #print("results.total_rows:",results.total_rows)
-            #print("results.num_results:",results.num_results)
-            # TODO: check affected row
+            check_job = self.client.query(check_query, job_config=job_config)
+            match_count = 0
+            for row in check_job.result():
+                match_count = row.match_count
+
+            if match_count > 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Cannot delete league {league_id} because it has {match_count} related matches."
+                )
+            
+            delete_query = f"""
+                DELETE FROM `{self.project_id}.{self.dataset}.{self.table}`
+                WHERE league_id = @league_id
+            """
+            delete_job = self.client.query(delete_query, job_config=job_config)
+            delete_job.result()
             return 1
+        
+        except HTTPException:
+             raise
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to delete league: {str(e)}"
             )
-        
+
     def get(self, league_id: str) -> Optional[LeagueResponse]:
         query = f"""
             SELECT league_id, league_name, country, season, status, created_at, updated_at
